@@ -42,9 +42,6 @@ export default function AddVaultItem() {
 
   return (
     <View style={{ flex: 1, padding: 16, gap: 14 }}>
-      <Text variant="headlineMedium" style={{ marginBottom: 4 }}>
-        Add Vault Item
-      </Text>
 
       {!!error && <Text style={{ color: 'red' }}>{error}</Text>}
 

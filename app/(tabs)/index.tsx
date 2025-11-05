@@ -34,9 +34,9 @@ export default function DashboardScreen() {
   }
 
   return (
-    <View style={{ flex: 1, padding: 16, gap: 12 }}>
+    <View style={{ flex: 1, padding: 16, paddingTop: 34, gap: 12 }}>
       {/* Page Title */}
-      <Text variant="headlineMedium" style={{ marginBottom: 4, marginTop: 8 }}>
+      <Text variant="headlineMedium" style={{ marginBottom: 4 }}>
         Vault
       </Text>
 

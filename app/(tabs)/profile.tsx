@@ -136,7 +136,7 @@ export default function ProfileScreen() {
 
   return (
     <>
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 16, paddingTop: 24 }}>
+      <ScrollView contentContainerStyle={{ padding: 16, gap: 16, paddingTop: 32 }}>
         {/* Page Title */}
         <Text variant="headlineMedium" style={{ marginBottom: 8 }}>
           Profile

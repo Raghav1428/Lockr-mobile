@@ -1,7 +1,7 @@
 import { useVaultStore } from '@/stores/vault';
 import * as Clipboard from 'expo-clipboard';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import React, { useLayoutEffect, useState } from 'react';
 import { View } from 'react-native';
 import { Button, Text, useTheme } from 'react-native-paper';
 
@@ -9,10 +9,18 @@ export default function VaultItemDetail() {
   const params = useLocalSearchParams<{ id?: string | string[] }>();
   const id = Array.isArray(params.id) ? params.id?.[0] : params.id;
   const router = useRouter();
+  const navigation = useNavigation();
   const theme = useTheme();
   const { getById, deleteItem } = useVaultStore();
   const item = id ? getById(id) : undefined;
   const [showPassword, setShowPassword] = useState(false);
+
+  // Update header title with site name
+  useLayoutEffect(() => {
+    if (item?.siteName) {
+      navigation.setOptions({ title: item.siteName });
+    }
+  }, [item?.siteName, navigation]);
 
   const onCopy = async () => {
     if (item?.password) {
@@ -50,9 +58,6 @@ export default function VaultItemDetail() {
 
   return (
     <View style={{ flex: 1, padding: 16, gap: 14 }}>
-      <Text variant="headlineMedium" style={{ marginBottom: 4 }}>
-        {String(item.siteName ?? '')}
-      </Text>
 
       <View>
         <Label>Site Name</Label>
