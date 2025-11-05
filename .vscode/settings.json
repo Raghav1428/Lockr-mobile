@@ -3,5 +3,19 @@
     "source.fixAll": "explicit",
     "source.organizeImports": "explicit",
     "source.sortMembers": "explicit"
+  },
+
+  // 👇 Added fixes for the Expo TypeScript false errors
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.disableAutomaticTypeAcquisition": true,
+  "typescript.preferences.ignoreProjectWarnings": true,
+  "typescript.tsserver.experimental.enableProjectDiagnostics": false,
+
+  // Optional but good practice — ignore node_modules in search & file watcher
+  "search.exclude": {
+    "**/node_modules": true
+  },
+  "files.watcherExclude": {
+    "**/node_modules/**": true
   }
 }

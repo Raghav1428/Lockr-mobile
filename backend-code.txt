@@ -1,0 +1,268 @@
+import { Request, Response } from 'express';
+import User from '../models/user.models';
+import SecurityEvent from '../models/security-event.models';
+import { hashPassword, verifyPassword } from '../utils/password.utils';
+import { randomBytes, aesGcmEncrypt, deriveKEK } from '../utils/crypto.utils';
+import { genMfaSecret, qrDataURL, verifyTotp } from '../utils/mfa.utils';
+import { signAccess, signRefresh, verifyRefresh } from '../utils/jwt.utils';
+import bcrypt from 'bcryptjs';
+
+function setRefreshCookie(res: Response, token: string){
+  res.cookie('rt', token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    domain: process.env.COOKIE_DOMAIN,
+    maxAge: 1000 * 60 * 60 * 24 * 30
+  });
+}
+
+export const register = async (req: Request, res: Response) => {
+  const { email, password } = req.body;
+  if(!email || !password) return res.status(400).json({ message:'Email and password required' });
+  if(await User.findOne({ email })) return res.status(400).json({ message:'User exists' });
+
+  const passwordHash = await hashPassword(password);
+
+  // zero-knowledge envelope: create a random 32-byte vault key; encrypt using KEK derived from user's password
+  const kekSalt = randomBytes(16);
+  const kek = await deriveKEK(password, kekSalt);
+  const vaultKey = randomBytes(32);
+  const vaultKeyEncB64 = aesGcmEncrypt(vaultKey, kek);
+
+  // MFA provisioning (enabled-by-default per your spec)
+  const { base32, otpauth } = genMfaSecret(email);
+  const qr = await qrDataURL(otpauth);
+
+  const user = await User.create({
+    email, passwordHash,
+    kekSaltB64: kekSalt.toString('base64'),
+    vaultKeyEncB64,
+    mfaEnabled: true,
+    mfaSecret: base32,
+  });
+
+  return res.status(201).json({ userId: user._id, mfa: { secret: base32, otpauth, qr } });
+};
+
+export const login = async (req: Request, res: Response) => {
+  const { email, password } = req.body;
+  const user = await User.findOne({ email });
+  if(!user) return res.status(404).json({ message:'User not found' });
+
+  const ok = await verifyPassword(password, user.passwordHash);
+  if(!ok){
+    await User.updateOne({ _id: user._id }, { $inc: { failedLoginCount: 1 } });
+    await SecurityEvent.create({ userId: user._id, type: 'LOGIN_FAIL', ip: req.ip, ua: req.headers['user-agent'] });
+    return res.status(401).json({ message:'Invalid credentials' });
+  }
+
+  if(!user.mfaEnabled) return res.status(400).json({ code:'MFA_REQUIRED', message: 'Enable MFA' });
+
+  await SecurityEvent.create({ userId: user._id, type: 'LOGIN_PASS', ip: req.ip, ua: req.headers['user-agent'] });
+
+  // ask for TOTP step
+  return res.status(200).json({ mfaRequired: true, userId: user._id });
+};
+
+export const verifyMfaAndIssue = async (req: Request, res: Response) => {
+  const { userId, token, backupCode } = req.body;
+  const user = await User.findById(userId);
+  if(!user) return res.status(404).json({ message: 'User not found' });
+
+  let mfaOK = false;
+  if(token) mfaOK = verifyTotp(token, user.mfaSecret!);
+  if(!mfaOK && backupCode){
+    // backup codes are bcrypt-hashed; code is one-time use
+    const idx = (user.mfaBackupHash || []).findIndex(h => bcrypt.compareSync(backupCode, h));
+    if(idx !== -1){
+      mfaOK = true;
+      user.mfaBackupHash!.splice(idx, 1);
+      await user.save();
+    }
+  }
+  if(!mfaOK){
+    await SecurityEvent.create({ userId, type:'MFA_FAIL', ip: req.ip, ua: req.headers['user-agent'] });
+    return res.status(401).json({ message: 'Invalid MFA' });
+  }
+
+  const access = signAccess({ id: user._id, role: user.role });
+  const refresh = signRefresh({ id: user._id });
+  setRefreshCookie(res, refresh);
+
+  await User.updateOne({ _id: user._id }, { $set: { lastLoginAt: new Date(), failedLoginCount: 0 } });
+  await SecurityEvent.create({ userId, type:'LOGIN_SUCCESS', ip: req.ip, ua: req.headers['user-agent'] });
+
+  return res.status(200).json({ token: access });
+};
+
+export const refreshToken = async (req: Request, res: Response) => {
+  const rt = req.cookies?.rt;
+  if(!rt) return res.status(401).json({ message: 'No refresh token' });
+  try{
+    const payload: any = verifyRefresh(rt);
+    const access = signAccess({ id: payload.id, role: payload.role });
+    const newRefresh = signRefresh({ id: payload.id });
+    setRefreshCookie(res, newRefresh);
+    return res.status(200).json({ token: access });
+  }catch{
+    return res.status(401).json({ message: 'Invalid refresh token' });
+  }
+};
+
+export const logout = async (_req: Request, res: Response) => {
+  res.clearCookie('rt', { domain: process.env.COOKIE_DOMAIN, httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV==='production' });
+  res.status(200).json({ message: 'Logged out' });
+};
+
+export const generateBackupCodes = async (req: any, res: Response) => {
+  const user = await User.findById(req.user.id);
+  if(!user) return res.status(404).json({ message: 'User not found' });
+  const codes = Array.from({length: 10}, () => Math.random().toString(36).slice(2, 10).toUpperCase());
+  user.mfaBackupHash = await Promise.all(codes.map(c => bcrypt.hash(c, 10)));
+  await user.save();
+  await SecurityEvent.create({ userId: user._id, type:'MFA_BACKUP_ROTATE' });
+  // Show plaintext *once*:
+  res.status(200).json({ codes });
+};
+
+export const me = async (req: any, res: Response) => {
+  const user = await User.findById(req.user.id).select('email role mfaEnabled createdAt lastLoginAt');
+  if(!user) return res.status(404).json({ message:'User not found' });
+  res.json({ user });
+};
+
+
+import { Request, Response } from 'express';
+import VaultItem from '../models/vault-item.models';
+import SecurityEvent from '../models/security-event.models';
+import { aesGcmEncrypt, aesGcmDecrypt } from '../utils/crypto.utils';
+
+export const addVaultItem = async (req: any, res: Response) => {
+  const { siteName, username, password, notes } = req.body;
+  const aad = Buffer.from(req.user.id);
+
+  const passwordB64 = aesGcmEncrypt(Buffer.from(password, 'utf8'), req.vaultKey, aad);
+  const notesB64 = notes ? aesGcmEncrypt(Buffer.from(notes, 'utf8'), req.vaultKey, aad) : undefined;
+
+  const item = await VaultItem.create({ userId: req.user.id, siteName, username, passwordB64, notesB64 });
+  await SecurityEvent.create({ userId: req.user.id, type:'VAULT_ADD', meta: { id: item._id, siteName } });
+  res.status(201).json({ message: 'Vault item added', itemId: item._id });
+};
+
+export const listVaultItems = async (req: any, res: Response) => {
+  const items = await VaultItem.find({ userId: req.user.id }).sort({ createdAt: -1 });
+  const aad = Buffer.from(req.user.id);
+  const out = items.map(i => ({
+    id: i._id,
+    siteName: i.siteName,
+    username: i.username,
+    password: aesGcmDecrypt(i.passwordB64, req.vaultKey, aad).toString('utf8'),
+    notes: i.notesB64 ? aesGcmDecrypt(i.notesB64, req.vaultKey, aad).toString('utf8') : undefined,
+    createdAt: i.createdAt
+  }));
+  res.json(out);
+};
+
+export const updateVaultItem = async (req: any, res: Response) => {
+  const { id } = req.params;
+  const { siteName, username, password, notes } = req.body;
+  const item = await VaultItem.findOne({ _id: id, userId: req.user.id });
+  if(!item) return res.status(404).json({ message:'Not found' });
+
+  const aad = Buffer.from(req.user.id);
+  if(siteName) item.siteName = siteName;
+  if(username) item.username = username;
+  if(typeof password === 'string') item.passwordB64 = aesGcmEncrypt(Buffer.from(password,'utf8'), req.vaultKey, aad);
+  if(typeof notes === 'string') item.notesB64 = aesGcmEncrypt(Buffer.from(notes,'utf8'), req.vaultKey, aad);
+
+  await item.save();
+  await SecurityEvent.create({ userId: req.user.id, type:'VAULT_UPDATE', meta: { id } });
+  res.json({ message:'Updated' });
+};
+
+export const deleteVaultItem = async (req: any, res: Response) => {
+  const { id } = req.params;
+  await VaultItem.deleteOne({ _id:id, userId: req.user.id });
+  await SecurityEvent.create({ userId: req.user.id, type:'VAULT_DELETE', meta: { id } });
+  res.json({ message:'Deleted' });
+};
+
+import { Router } from 'express';
+import { authLimiter } from '../middlewares/limitter.middlewares';
+import { auth } from '../middlewares/auth.middlewares';
+import { register, login, verifyMfaAndIssue, refreshToken, logout, generateBackupCodes, me } from '../controllers/auth.controllers';
+
+const r = Router();
+r.post('/register', authLimiter, register);
+r.post('/login',    authLimiter, login);
+r.post('/mfa/verify', authLimiter, verifyMfaAndIssue);
+r.post('/token/refresh', refreshToken);
+r.post('/logout', logout);
+r.post('/mfa/backup/rotate', auth, generateBackupCodes);
+r.get('/me', auth, me);
+
+export default r;
+
+import { Router } from 'express';
+import { auth } from '../middlewares/auth.middlewares';
+import { withVaultKey } from '../middlewares/with-vault-key.middlewares';
+import { addVaultItem, listVaultItems, deleteVaultItem, updateVaultItem } from '../controllers/vault.controllers';
+
+const r = Router();
+// All vault routes require: Authorization: Bearer <access>, and X-Master-Password header
+r.post('/',     auth, withVaultKey, addVaultItem);
+r.get('/',      auth, withVaultKey, listVaultItems);
+r.put('/:id',   auth, withVaultKey, updateVaultItem);
+r.delete('/:id',auth, withVaultKey, deleteVaultItem);
+
+export default r;
+
+import dotenv from "dotenv";
+dotenv.config();
+
+import express from "express";
+import helmet from "helmet";
+import cors from "cors";
+import cookieParser from "cookie-parser";
+import bodyParser from "body-parser";
+import connectDB from "./src/db/index.db";
+import authRoutes from "./src/routes/auth.routes";
+import vaultRoutes from "./src/routes/vault.routes";
+
+const app = express();
+
+// Middleware
+app.use(helmet());
+app.use(cors({ origin: true, credentials: true }));
+app.use(bodyParser.json({ limit: "512kb" }));
+app.use(cookieParser());
+
+// Routes
+app.get("/health", (_req, res) => res.json({ ok: true }));
+app.use("/api/auth", authRoutes);
+app.use("/api/vault", vaultRoutes);
+
+// Central error guard
+app.use((err: any, _req: any, res: any, _next: any) => {
+  console.error(err);
+  res.status(500).json({ message: "Internal error" });
+});
+
+async function startServer() {
+  try {
+    await connectDB();
+    console.log("Database connected successfully");
+
+    const PORT = process.env.PORT || 4000;
+    app.listen(PORT, () => {
+      console.log(`Server listening on port ${PORT}`);
+    });
+  } catch (err) {
+    console.error("Failed to start server:", err);
+    process.exit(1);
+  }
+}
+
+startServer();
+
