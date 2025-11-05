@@ -1,9 +1,21 @@
-import React, { useEffect, useState } from 'react';
-import { View, ScrollView } from 'react-native';
-import { Button, Text, Card, Divider, List, useTheme, Portal, Dialog } from 'react-native-paper';
-import * as Clipboard from 'expo-clipboard';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/lib/api';
+import * as Clipboard from 'expo-clipboard';
+import React, { useEffect, useState } from 'react';
+import { ScrollView, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Avatar,
+  Button,
+  Card,
+  Chip,
+  Dialog,
+  Divider,
+  List,
+  Portal,
+  Text,
+  useTheme,
+} from 'react-native-paper';
 
 export default function ProfileScreen() {
   const theme = useTheme();
@@ -18,7 +30,11 @@ export default function ProfileScreen() {
   useEffect(() => {
     (async () => {
       setLoadingProfile(true);
-      try { await loadMe(); } finally { setLoadingProfile(false); }
+      try {
+        await loadMe();
+      } finally {
+        setLoadingProfile(false);
+      }
     })();
   }, []);
 
@@ -30,7 +46,6 @@ export default function ProfileScreen() {
       const list: string[] = res.data?.codes || [];
       setCodes(list);
       setShowCodes(true);
-      // Refresh profile to update count & last rotation
       await loadMe();
     } catch (e: any) {
       console.log('Rotate backup codes failed:', e?.response?.data || e?.message);
@@ -47,7 +62,6 @@ export default function ProfileScreen() {
   };
 
   const onCloseCodes = () => {
-    // Clear plaintext from memory when modal closes
     setCodes([]);
     setShowCodes(false);
     setCopied(false);
@@ -57,71 +71,231 @@ export default function ProfileScreen() {
     await logout();
   };
 
+  const Pill = ({
+    label,
+    positive = false,
+  }: {
+    label: string;
+    positive?: boolean;
+  }) => {
+    const bg = positive ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)';
+    const fg = positive ? '#10B981' : '#EF4444';
+    return (
+      <Chip
+        compact
+        selectedColor={fg}
+        style={{
+          backgroundColor: bg,
+          borderRadius: 6,
+          paddingHorizontal: 6, // instead of fixed height
+        }}
+        textStyle={{ fontSize: 11, fontWeight: '600', marginVertical: 2 }}
+      >
+        {label}
+      </Chip>
+    );
+  };
+
+  const InfoRow = ({
+    label,
+    value,
+    icon,
+    rightComponent,
+  }: {
+    label: string;
+    value?: string | React.ReactNode;
+    icon: string;
+    rightComponent?: React.ReactNode;
+  }) => (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 12,
+      }}
+    >
+      <List.Icon icon={icon} color={theme.colors.onSurfaceVariant} />
+      <View style={{ flex: 1, marginLeft: 4 }}>
+        <Text
+          variant="bodySmall"
+          style={{ color: theme.colors.onSurfaceVariant, marginBottom: 2 }}
+        >
+          {label}
+        </Text>
+        {typeof value === 'string' ? (
+          <Text variant="bodyLarge" style={{ fontWeight: '500' }}>
+            {value}
+          </Text>
+        ) : (
+          value
+        )}
+      </View>
+      {rightComponent && <View style={{ marginLeft: 8 }}>{rightComponent}</View>}
+    </View>
+  );
+
   return (
     <>
-      <ScrollView contentContainerStyle={{ padding: 16 }}>
-        <Card style={{ padding: 16, borderRadius: 12, marginBottom: 16 }}>
-          <Text variant="headlineMedium" style={{ marginBottom: 8 }}>Profile</Text>
-          <Divider style={{ marginVertical: 8 }} />
-          <List.Item title="Email" description={user?.email || '-'} left={props => <List.Icon {...props} icon="email" />} />
-          <List.Item title="Role" description={user?.role || 'user'} left={props => <List.Icon {...props} icon="account" />} />
-          <List.Item
-            title="MFA"
-            description={user?.mfaEnabled ? 'Enabled' : 'Disabled'}
-            left={props => <List.Icon {...props} icon={user?.mfaEnabled ? 'shield-check' : 'shield-off'} />}
-          />
-          <List.Item
-            title="Backup Codes Remaining"
-            description={String(user?.backupCodesRemaining ?? 0)}
-            left={props => <List.Icon {...props} icon="numeric" />}
-          />
-          <List.Item
-            title="Last Backup Rotation"
-            description={user?.lastBackupRotation ? new Date(user.lastBackupRotation).toLocaleString() : '—'}
-            left={props => <List.Icon {...props} icon="history" />}
-          />
-        </Card>
+      <ScrollView contentContainerStyle={{ padding: 16, gap: 16, paddingTop: 24 }}>
+        {/* Page Title */}
+        <Text variant="headlineMedium" style={{ marginBottom: 8 }}>
+          Profile
+        </Text>
 
-        <Card style={{ padding: 16, borderRadius: 12, marginBottom: 16 }}>
-          <Text variant="titleLarge" style={{ marginBottom: 8 }}>Security</Text>
-          <Divider style={{ marginVertical: 8 }} />
-          <Button
-            mode="contained"
-            onPress={onRotate}
-            loading={rotating}
-            disabled={rotating}
-            style={{ borderRadius: 8, marginBottom: 8 }}
-            icon="refresh"
+        {/* PROFILE CARD */}
+        <Card style={{ borderRadius: 16, overflow: 'hidden' }}>
+          {/* Header */}
+          <View
+            style={{
+              padding: 20,
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: theme.colors.primaryContainer,
+            }}
           >
-            Generate New Backup Codes
-          </Button>
-          <Text style={{ color: theme.colors.onSurfaceVariant }}>
-            Generating new codes will invalidate any previous codes. You’ll see them once — copy and store safely.
-          </Text>
+            <Avatar.Icon
+              size={56}
+              icon="account"
+              color={theme.colors.onPrimaryContainer}
+              style={{ backgroundColor: theme.colors.primary }}
+            />
+            <View style={{ flex: 1, marginLeft: 16 }}>
+              <Text variant="headlineSmall" style={{ fontWeight: '600' }}>
+                {user?.email || 'User'}
+              </Text>
+              <Text
+                variant="bodyMedium"
+                style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}
+              >
+                Account settings
+              </Text>
+            </View>
+          </View>
+
+          {/* Content */}
+          <View style={{ padding: 20 }}>
+            {loadingProfile ? (
+              <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+                <ActivityIndicator />
+                <Text style={{ marginTop: 8, color: theme.colors.onSurfaceVariant }}>
+                  Loading profile…
+                </Text>
+              </View>
+            ) : (
+              <View>
+                <InfoRow
+                  label="Multi-Factor Authentication"
+                  icon={user?.mfaEnabled ? 'shield-check' : 'shield-off'}
+                  rightComponent={
+                    <Pill
+                      label={user?.mfaEnabled ? 'Active' : 'Disabled'}
+                      positive={!!user?.mfaEnabled}
+                    />
+                  }
+                />
+
+                <Divider />
+
+                <InfoRow
+                  label="Backup Codes Remaining"
+                  value={String(user?.backupCodesRemaining ?? 0)}
+                  icon="key-variant"
+                />
+
+                <Divider />
+
+                <InfoRow
+                  label="Last Backup Rotation"
+                  value={
+                    user?.lastBackupRotation
+                      ? new Date(user.lastBackupRotation).toLocaleDateString('en-US', {
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric',
+                        })
+                      : '—'
+                  }
+                  icon="history"
+                />
+              </View>
+            )}
+          </View>
         </Card>
 
-        <Button mode="outlined" onPress={onLogout} style={{ borderRadius: 8 }} icon="logout">
-          Logout
+        {/* SECURITY ACTIONS */}
+        <Card style={{ borderRadius: 16, overflow: 'hidden' }}>
+          <List.Item
+            title="Generate New Backup Codes"
+            description="Rotates your backup codes and invalidates previous ones"
+            left={(props) => (
+              <List.Icon {...props} icon="refresh" color={theme.colors.primary} />
+            )}
+            right={(props) => (
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                {rotating ? (
+                  <ActivityIndicator size="small" />
+                ) : (
+                  <List.Icon {...props} icon="chevron-right" />
+                )}
+              </View>
+            )}
+            onPress={onRotate}
+            disabled={rotating}
+            style={{ paddingVertical: 8 }}
+          />
+        </Card>
+
+        {/* SIGN OUT */}
+        <Button
+          mode="outlined"
+          onPress={onLogout}
+          icon="logout"
+          style={{ borderRadius: 12, borderColor: theme.colors.error }}
+          textColor={theme.colors.error}
+          contentStyle={{ paddingVertical: 4 }}
+        >
+          Sign out
         </Button>
       </ScrollView>
 
       {/* Modal: show codes once */}
       <Portal>
-        <Dialog visible={showCodes} onDismiss={onCloseCodes} style={{ borderRadius: 12 }}>
+        <Dialog visible={showCodes} onDismiss={onCloseCodes} style={{ borderRadius: 16 }}>
           <Dialog.Title>Save These Backup Codes</Dialog.Title>
           <Dialog.Content>
             {codes.length === 0 ? (
               <Text>No codes to display.</Text>
             ) : (
               <View style={{ paddingVertical: 8 }}>
-                {codes.map((c) => (
-                  <Text key={c} style={{ fontFamily: 'monospace', letterSpacing: 1, marginBottom: 4 }}>
-                    {c}
-                  </Text>
-                ))}
-                <Divider style={{ marginVertical: 12 }} />
-                <Text style={{ color: theme.colors.onSurfaceVariant }}>
-                  These codes are shown only once. Store them in a safe place.
+                <View
+                  style={{
+                    backgroundColor: theme.colors.surfaceVariant,
+                    padding: 12,
+                    borderRadius: 8,
+                    marginBottom: 12,
+                  }}
+                >
+                  {codes.map((c, idx) => (
+                    <Text
+                      key={c}
+                      style={{
+                        fontFamily: 'monospace',
+                        letterSpacing: 1,
+                        marginBottom: idx < codes.length - 1 ? 8 : 0,
+                        fontSize: 14,
+                        fontWeight: '500',
+                      }}
+                    >
+                      {c}
+                    </Text>
+                  ))}
+                </View>
+                <Text
+                  variant="bodySmall"
+                  style={{ color: theme.colors.onSurfaceVariant, lineHeight: 18 }}
+                >
+                  These codes are shown only once. Store them in a safe place like a password
+                  manager.
                 </Text>
               </View>
             )}
@@ -130,7 +304,7 @@ export default function ProfileScreen() {
             <Button onPress={onCopy} mode="text" icon={copied ? 'check' : 'content-copy'}>
               {copied ? 'Copied' : 'Copy'}
             </Button>
-            <Button onPress={onCloseCodes} mode="contained" style={{ marginLeft: 8 }}>
+            <Button onPress={onCloseCodes} mode="contained">
               Done
             </Button>
           </Dialog.Actions>

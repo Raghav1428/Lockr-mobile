@@ -1,12 +1,14 @@
+import { useVaultStore } from '@/stores/vault';
+import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import { View } from 'react-native';
-import { TextInput, Button, Text } from 'react-native-paper';
-import { useRouter } from 'expo-router';
-import { useVaultStore } from '@/stores/vault';
+import { Button, Text, TextInput, useTheme } from 'react-native-paper';
 
 export default function AddVaultItem() {
   const router = useRouter();
   const { addItem } = useVaultStore();
+  const theme = useTheme();
+
   const [siteName, setSiteName] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -27,15 +29,75 @@ export default function AddVaultItem() {
     }
   };
 
+  const inputStyle = {
+    backgroundColor: theme.colors.surfaceVariant,
+    height: 42,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+  };
+
+  const Label = ({ children }: { children: string }) => (
+    <Text style={{ marginBottom: 4, opacity: 0.7, fontSize: 13 }}>{children}</Text>
+  );
+
   return (
-    <View style={{ padding: 16, gap: 12 }}>
-      <Text variant="headlineMedium">Add Vault Item</Text>
+    <View style={{ flex: 1, padding: 16, gap: 14 }}>
+      <Text variant="headlineMedium" style={{ marginBottom: 4 }}>
+        Add Vault Item
+      </Text>
+
       {!!error && <Text style={{ color: 'red' }}>{error}</Text>}
-      <TextInput label="Site Name" value={siteName} onChangeText={setSiteName} />
-      <TextInput label="Username" value={username} onChangeText={setUsername} autoCapitalize="none" />
-      <TextInput label="Password" value={password} onChangeText={setPassword} secureTextEntry />
-      <TextInput label="Notes" value={notes} onChangeText={setNotes} multiline />
-      <Button mode="contained" onPress={onSubmit} loading={loading} disabled={loading || !siteName || !username || !password}>
+
+      <View>
+        <Label>Site Name</Label>
+        <TextInput
+          value={siteName}
+          onChangeText={setSiteName}
+          mode="flat"
+          style={inputStyle}
+        />
+      </View>
+
+      <View>
+        <Label>Username / Email</Label>
+        <TextInput
+          value={username}
+          onChangeText={setUsername}
+          autoCapitalize="none"
+          mode="flat"
+          style={inputStyle}
+        />
+      </View>
+
+      <View>
+        <Label>Password</Label>
+        <TextInput
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry
+          mode="flat"
+          style={inputStyle}
+        />
+      </View>
+
+      <View>
+        <Label>Notes (Optional)</Label>
+        <TextInput
+          value={notes}
+          onChangeText={setNotes}
+          multiline
+          mode="flat"
+          style={[inputStyle, { height: 80, paddingTop: 8 }]}
+        />
+      </View>
+
+      <Button
+        mode="contained"
+        onPress={onSubmit}
+        loading={loading}
+        disabled={loading || !siteName || !username || !password}
+        style={{ borderRadius: 10, marginTop: 8, paddingVertical: 6 }}
+      >
         Save
       </Button>
     </View>
